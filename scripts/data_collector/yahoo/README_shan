@@ -1,0 +1,7 @@
+  cd scripts/data_collector/yahoo/
+  pip install -r requirements.txt 
+  python collector.py download_data --source_dir ~/.qlib/stock_data/source/in_data --start 2020-01-01 --end 2020-12-31 --delay 1 --interval 1d --region IN
+  python collector.py normalize_data
+  cd ../..
+  python dump_bin.py dump_all --data_path ~/.qlib/stock_data/source/in_data/ --qlib_dir ~/.qlib/qlib_data/in_data/
+  ls ~/.qlib/qlib_data/in_data/

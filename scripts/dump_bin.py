@@ -170,6 +170,9 @@ class DumpDataBase:
         df = read_as_df(file_path, low_memory=False)
         if self.date_field_name in df.columns:
             df[self.date_field_name] = pd.to_datetime(df[self.date_field_name])
+            # Convert timezone-aware datetimes to timezone-naive
+            if hasattr(df[self.date_field_name].dtype, 'tz') and df[self.date_field_name].dtype.tz is not None:
+                df[self.date_field_name] = df[self.date_field_name].dt.tz_localize(None)
         # df.drop_duplicates([self.date_field_name], inplace=True)
         return df
 
@@ -177,11 +180,16 @@ class DumpDataBase:
         return fname_to_code(file_path.stem.strip().lower())
 
     def get_dump_fields(self, df_columns: Iterable[str]) -> Iterable[str]:
-        return (
-            self._include_fields
-            if self._include_fields
-            else set(df_columns) - set(self._exclude_fields) if self._exclude_fields else df_columns
-        )
+        # Always exclude the symbol and date fields from dump as they're metadata, not features
+        mandatory_exclude = {self.symbol_field_name, self.date_field_name}
+
+        if self._include_fields:
+            # If include_fields is specified, use only those (but still exclude mandatory fields)
+            return set(self._include_fields) - mandatory_exclude
+        else:
+            # Otherwise, exclude both user-specified and mandatory fields
+            all_exclude = mandatory_exclude | set(self._exclude_fields) if self._exclude_fields else mandatory_exclude
+            return set(df_columns) - all_exclude
 
     @staticmethod
     def _read_calendars(calendar_path: Path) -> List[pd.Timestamp]:
@@ -227,7 +235,17 @@ class DumpDataBase:
     def data_merge_calendar(self, df: pd.DataFrame, calendars_list: List[pd.Timestamp]) -> pd.DataFrame:
         # calendars
         calendars_df = pd.DataFrame(data=calendars_list, columns=[self.date_field_name])
-        calendars_df[self.date_field_name] = calendars_df[self.date_field_name].astype("datetime64[ns]")
+        # Handle timezone-aware datetimes by converting to timezone-naive
+        if hasattr(calendars_df[self.date_field_name].dtype, 'tz') and calendars_df[self.date_field_name].dtype.tz is not None:
+            calendars_df[self.date_field_name] = calendars_df[self.date_field_name].dt.tz_localize(None)
+        else:
+            calendars_df[self.date_field_name] = calendars_df[self.date_field_name].astype("datetime64[ns]")
+
+        # Ensure df date column is also timezone-naive
+        if hasattr(df[self.date_field_name].dtype, 'tz') and df[self.date_field_name].dtype.tz is not None:
+            df = df.copy()
+            df[self.date_field_name] = df[self.date_field_name].dt.tz_localize(None)
+
         cal_df = calendars_df[
             (calendars_df[self.date_field_name] >= df[self.date_field_name].min())
             & (calendars_df[self.date_field_name] <= df[self.date_field_name].max())
@@ -240,7 +258,20 @@ class DumpDataBase:
 
     @staticmethod
     def get_datetime_index(df: pd.DataFrame, calendar_list: List[pd.Timestamp]) -> int:
-        return calendar_list.index(df.index.min())
+        # Ensure both the df index and calendar_list are timezone-naive for comparison
+        df_min = df.index.min()
+        if hasattr(df_min, 'tz') and df_min.tz is not None:
+            df_min = df_min.tz_localize(None)
+
+        # Normalize calendar_list to timezone-naive if needed
+        normalized_calendar = []
+        for ts in calendar_list:
+            if hasattr(ts, 'tz') and ts.tz is not None:
+                normalized_calendar.append(ts.tz_localize(None))
+            else:
+                normalized_calendar.append(ts)
+
+        return normalized_calendar.index(df_min)
 
     def _data_to_bin(self, df: pd.DataFrame, calendar_list: List[pd.Timestamp], features_dir: Path):
         if df.empty:
@@ -470,6 +501,10 @@ class DumpDataUpdate(DumpDataBase):
                 _df[self.date_field_name].dtype, np.datetime64
             ):
                 _df[self.date_field_name] = pd.to_datetime(_df[self.date_field_name])
+            # Convert timezone-aware datetimes to timezone-naive
+            if self.date_field_name in _df.columns:
+                if hasattr(_df[self.date_field_name].dtype, 'tz') and _df[self.date_field_name].dtype.tz is not None:
+                    _df[self.date_field_name] = _df[self.date_field_name].dt.tz_localize(None)
             if self.symbol_field_name not in _df.columns:
                 _df[self.symbol_field_name] = self.get_symbol_from_file(file_path)
             return _df

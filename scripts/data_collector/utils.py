@@ -386,15 +386,85 @@ def get_in_stock_symbols(qlib_data_path: [str, Path] = None) -> list:
     """
     global _IN_SYMBOLS  # pylint: disable=W0603
 
-    @deco_retry
     def _get_nifty():
-        url = f"https://www1.nseindia.com/content/equities/EQUITY_L.csv"
-        df = pd.read_csv(url)
-        df = df.rename(columns={"SYMBOL": "Symbol"})
-        df["Symbol"] = df["Symbol"] + ".NS"
-        _symbols = df["Symbol"].dropna()
-        _symbols = _symbols.unique().tolist()
-        return _symbols
+        """Get Indian stock symbols using multiple methods with fallbacks"""
+
+        # Method 1: Try using nselib if available
+        try:
+            from nselib import capital_market
+            logger.info("Fetching Indian stock symbols using nselib...")
+            equity_list = capital_market.equity_list()
+            if equity_list is not None and not equity_list.empty:
+                symbols = [f"{symbol}.NS" for symbol in equity_list['SYMBOL'].tolist()]
+                logger.info(f"Successfully fetched {len(symbols)} symbols using nselib")
+                return symbols
+        except ImportError:
+            logger.info("nselib not installed, trying alternative methods...")
+        except Exception as e:
+            logger.warning(f"nselib failed: {e}, trying alternative methods...")
+
+        # Method 2: Try NSE website with requests
+        try:
+            url = "https://www1.nseindia.com/content/equities/EQUITY_L.csv"
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate',
+                'Connection': 'keep-alive',
+            }
+            response = requests.get(url, headers=headers, timeout=30, verify=True)
+            response.raise_for_status()
+
+            from io import StringIO
+            df = pd.read_csv(StringIO(response.text))
+            df = df.rename(columns={"SYMBOL": "Symbol"})
+            df["Symbol"] = df["Symbol"] + ".NS"
+            symbols = df["Symbol"].dropna().unique().tolist()
+            logger.info(f"Successfully fetched {len(symbols)} symbols from NSE website")
+            return symbols
+        except Exception as e:
+            logger.warning(f"NSE website failed: {e}. Using fallback symbol list...")
+
+        # Method 3: Fallback to a predefined list of major stocks
+        # This includes NIFTY 50, NIFTY Next 50, and other major stocks
+        logger.info("Using fallback list of major Indian stocks")
+        fallback_symbols = [
+            # NIFTY 50 stocks
+            "ADANIENT.NS", "ADANIPORTS.NS", "APOLLOHOSP.NS", "ASIANPAINT.NS", "AXISBANK.NS",
+            "BAJAJ-AUTO.NS", "BAJFINANCE.NS", "BAJAJFINSV.NS", "BPCL.NS", "BHARTIARTL.NS",
+            "BRITANNIA.NS", "CIPLA.NS", "COALINDIA.NS", "DIVISLAB.NS", "DRREDDY.NS",
+            "EICHERMOT.NS", "GRASIM.NS", "HCLTECH.NS", "HDFCBANK.NS", "HDFCLIFE.NS",
+            "HEROMOTOCO.NS", "HINDALCO.NS", "HINDUNILVR.NS", "ICICIBANK.NS", "ITC.NS",
+            "INDUSINDBK.NS", "INFY.NS", "JSWSTEEL.NS", "KOTAKBANK.NS", "LT.NS",
+            "M&M.NS", "MARUTI.NS", "NTPC.NS", "NESTLEIND.NS", "ONGC.NS",
+            "POWERGRID.NS", "RELIANCE.NS", "SBILIFE.NS", "SBIN.NS", "SUNPHARMA.NS",
+            "TCS.NS", "TATACONSUM.NS", "TATAMOTORS.NS", "TATASTEEL.NS", "TECHM.NS",
+            "TITAN.NS", "UPL.NS", "ULTRACEMCO.NS", "WIPRO.NS",
+            # NIFTY Next 50 and other major stocks
+            "ACC.NS", "AMBUJACEM.NS", "BANDHANBNK.NS", "BERGEPAINT.NS", "BIOCON.NS",
+            "BOSCHLTD.NS", "COLPAL.NS", "CONCOR.NS", "DLF.NS", "DABUR.NS",
+            "DMART.NS", "GAIL.NS", "GODREJCP.NS", "HAVELLS.NS", "HDFCAMC.NS",
+            "ICICIGI.NS", "ICICIPRULI.NS", "IDEA.NS", "IDFCFIRSTB.NS", "INDIGO.NS",
+            "IOC.NS", "IRCTC.NS", "JINDALSTEL.NS", "LICHSGFIN.NS", "MARICO.NS",
+            "MCDOWELL-N.NS", "MUTHOOTFIN.NS", "NAUKRI.NS", "NMDC.NS", "OFSS.NS",
+            "OIL.NS", "PAGEIND.NS", "PETRONET.NS", "PIDILITIND.NS", "PNB.NS",
+            "PVR.NS", "RECLTD.NS", "SHREECEM.NS", "SIEMENS.NS", "SRF.NS",
+            "TATAPOWER.NS", "TORNTPHARM.NS", "TRENT.NS", "VEDL.NS", "VOLTAS.NS",
+            "ZEEL.NS", "ZOMATO.NS", "SAIL.NS", "BHEL.NS", "BEL.NS",
+            # Additional stocks
+            "LUPIN.NS", "MOTHERSON.NS", "MPHASIS.NS", "MRF.NS", "PIIND.NS",
+            "INDHOTEL.NS", "ABCAPITAL.NS", "ABFRL.NS", "AUROPHARMA.NS", "BALKRISIND.NS",
+            "BATAINDIA.NS", "CANBK.NS", "CHOLAFIN.NS", "ESCORTS.NS", "EXIDEIND.NS",
+            "FEDERALBNK.NS", "GMRINFRA.NS", "GODREJPROP.NS", "HINDPETRO.NS", "IBULHSGFIN.NS",
+            "INDUSTOWER.NS", "L&TFH.NS", "LAURUSLABS.NS", "MANAPPURAM.NS", "METROPOLIS.NS",
+            "NAM-INDIA.NS", "NATIONALUM.NS", "NAVINFLUOR.NS", "OBEROIRLTY.NS", "PERSISTENT.NS",
+            "PFC.NS", "RBLBANK.NS", "SBICARD.NS", "SRTRANSFIN.NS", "TORNTPOWER.NS",
+            "TVSMOTOR.NS", "UBL.NS", "UNIONBANK.NS", "MFSL.NS", "JUBLFOOD.NS",
+        ]
+        logger.warning(f"Using fallback list with {len(fallback_symbols)} major Indian stocks. "
+                      "For complete coverage, install nselib: pip install nselib")
+        return fallback_symbols
 
     if _IN_SYMBOLS is None:
         _all_symbols = _get_nifty()

@@ -20,6 +20,13 @@ from loguru import logger
 from yahooquery import Ticker
 from dateutil.tz import tzlocal
 
+try:
+    import yfinance as yf
+    YFINANCE_AVAILABLE = True
+except ImportError:
+    YFINANCE_AVAILABLE = False
+    logger.warning("yfinance not available, Indian stocks may not work properly")
+
 import qlib
 from qlib.data import D
 from qlib.tests.data import GetData
@@ -307,6 +314,51 @@ class YahooCollectorIN(YahooCollector, ABC):
     @property
     def _timezone(self):
         return "Asia/Kolkata"
+
+    @staticmethod
+    def get_data_from_remote(symbol, interval, start, end, show_1min_logging: bool = False):
+        """Override to use yfinance for Indian stocks to properly get adjclose column"""
+        error_msg = f"{symbol}-{interval}-{start}-{end}"
+
+        if not YFINANCE_AVAILABLE:
+            logger.error(f"yfinance is required for Indian stocks. Please install: pip install yfinance")
+            return None
+
+        def _show_logging_func(msg):
+            if interval == YahooCollector.INTERVAL_1min and show_1min_logging:
+                logger.warning(f"{error_msg}:{msg}")
+
+        interval_map = {"1m": "1m", "1min": "1m", "1d": "1d"}
+        yf_interval = interval_map.get(interval, interval)
+
+        try:
+            ticker = yf.Ticker(symbol)
+            # Use auto_adjust=False to get the Adj Close column
+            _resp = ticker.history(start=start, end=end, interval=yf_interval, auto_adjust=False, actions=False)
+
+            if isinstance(_resp, pd.DataFrame) and not _resp.empty:
+                # yfinance returns columns: Open, High, Low, Close, Volume, and sometimes Adj Close
+                # Rename columns to match expected format
+                _resp = _resp.reset_index()
+                _resp.columns = [col.lower() for col in _resp.columns]
+
+                # Rename 'adj close' to 'adjclose' if it exists
+                if 'adj close' in _resp.columns:
+                    _resp = _resp.rename(columns={'adj close': 'adjclose'})
+
+                # Add symbol column
+                _resp['symbol'] = symbol
+
+                return _resp
+            else:
+                _show_logging_func("Empty response from yfinance")
+                return None
+
+        except Exception as e:
+            logger.warning(
+                f"get data error: {symbol}--{start}--{end}: {str(e)}"
+            )
+            return None
 
 
 class YahooCollectorIN1d(YahooCollectorIN):
